@@ -1,0 +1,53 @@
+version: '2.1'
+
+# ecr用のorbを使用
+orbs:
+  aws-ecr: circleci/aws-ecr@7.3.0
+
+# ビルドにdockerコンテナを利用
+executors:
+  default:
+    docker: 
+      - image: cimg/base:2021.04
+
+# 以下の順番で処理を実行
+# 1.「aws-ecr/build-image」でpushしたDockerfileからビルドを行う
+# 2.「test docker image」でビルドしたイメージからコンテナを立ち上げ、テストを行う
+# 3.「aws-ecr/ecr-login」でECRへのログインを行う
+# 4.「aws-ecr/push-image」でECRへビルドしたイメージをpush
+jobs:
+  build_and_test_image:
+    executor: default
+    steps:   
+      - checkout 
+      - setup_remote_docker  # dockerが使用可能になる
+      - aws-ecr/build-image: # 定義したorbを使用
+          account-url: AWS_ECR_ACCOUNT_URL
+          region: AWS_DEFAULT_REGION
+          repo: test-ecr
+          tag: "${CIRCLE_SHA1}" # タグにgithubコミットのハッシュを利用
+      - run: 
+          name: check docker-commands installed
+          command: |
+            docker images
+      - run:
+          name: test docker image
+          command: |
+            docker run --rm ${AWS_ECR_ACCOUNT_URL}/test-ecr:${CIRCLE_SHA1} /bin/bash -c "\
+              aws --version && \
+              echo && \
+              kubectl version --client --short \
+              echo \
+            "
+      - aws-ecr/ecr-login:
+          account-url: AWS_ECR_ACCOUNT_URL
+          region: AWS_DEFAULT_REGION
+      - aws-ecr/push-image:
+          account-url: AWS_ECR_ACCOUNT_URL
+          repo: test-ecr
+          tag: "${CIRCLE_SHA1}"
+
+workflows:
+  push-to-ecr:
+    jobs:
+      - build_and_test_image
